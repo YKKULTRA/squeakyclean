@@ -1,0 +1,57 @@
+name: macOS CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-test-package:
+    runs-on: macos-26
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Show Swift toolchain
+        run: swift --version
+
+      - name: Build with warnings as errors
+        run: swift build --configuration release -Xswiftc -warnings-as-errors
+
+      - name: Test with warnings as errors
+        run: swift test -Xswiftc -warnings-as-errors
+
+      - name: Package universal app
+        env:
+          ARCHS: arm64 x86_64
+          WARNINGS_AS_ERRORS: 1
+        run: Scripts/build-app.sh
+
+      - name: Verify packaged app
+        shell: bash
+        run: |
+          app="build/SqueakyClean.app"
+          executable="$app/Contents/MacOS/SqueakyClean"
+          plutil -lint "$app/Contents/Info.plist"
+          test -x "$executable"
+          lipo "$executable" -verify_arch arm64 x86_64
+          codesign --verify --deep --strict --verbose=2 "$app"
+
+      - name: Archive app
+        run: ditto -c -k --sequesterRsrc --keepParent build/SqueakyClean.app build/SqueakyClean.zip
+
+      - name: Upload app artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: SqueakyClean-universal
+          path: build/SqueakyClean.zip
+          if-no-files-found: error
